@@ -35,7 +35,7 @@ if uploaded_file is not None:
     st.subheader("📋 Data Preview")
     st.write(df.tail())
 
-    df_recent = df[['Close']].copy().tail(300)
+    df_recent = df[['Close']].copy().tail(200)
     df_recent['day_sin']   = np.sin(2 * np.pi * df_recent.index.dayofweek / 7)
     df_recent['day_cos']   = np.cos(2 * np.pi * df_recent.index.dayofweek / 7)
     df_recent['month_sin'] = np.sin(2 * np.pi * df_recent.index.month / 12)
@@ -62,7 +62,7 @@ if uploaded_file is not None:
     ])
     model.compile(optimizer='adam', loss='mse')
     with st.spinner("⏳ Training LSTM..."):
-        model.fit(X, y, epochs=40, batch_size=16, verbose=1, callbacks=[EarlyStopping(patience=5, restore_best_weights=True)])
+        model.fit(X, y, epochs=50, batch_size=8, verbose=1, callbacks=[EarlyStopping(patience=5, restore_best_weights=True)])
     st.success("✅ Model trained!")
 
     us_holidays = pd.to_datetime([
