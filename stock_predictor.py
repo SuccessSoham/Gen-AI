@@ -34,7 +34,7 @@ if uploaded_file is not None:
     st.subheader("📋 Data Preview")
     st.write(df.tail())
 
-    df_recent = df[['Close']].copy().tail(180)
+    df_recent = df[['Close']].copy().tail(320)
     df_recent['day_sin']   = np.sin(2 * np.pi * df_recent.index.dayofweek / 7)
     df_recent['day_cos']   = np.cos(2 * np.pi * df_recent.index.dayofweek / 7)
     df_recent['month_sin'] = np.sin(2 * np.pi * df_recent.index.month / 12)
@@ -80,7 +80,7 @@ if uploaded_file is not None:
                 dates.append(current)
         return dates
 
-    def forecast_adjusted(model, scaled_data, scaler, base_df, alpha=0.7):
+    def forecast_adjusted(model, scaled_data, scaler, base_df, alpha=0.8):
         seq = scaled_data[-seq_len:].reshape(1, seq_len, -1)
         preds = []
         f_dates = next_valid_trading_days(base_df.index[-1], 7)
