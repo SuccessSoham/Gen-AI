@@ -1,0 +1,7 @@
+openpyxl
+numpy
+pandas
+streamlit
+tensorflow
+scikit-learn
+matplotlib
