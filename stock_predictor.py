@@ -21,8 +21,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 Stock Price Predictor (Holiday-Aware)")
-st.write("Forecast the next 7 trading days using an LSTM with seasonal signals and US market holiday skipping.")
+st.title("📈 Stock Price Predictor with Volatility Guardrails")
 
 uploaded_file = st.file_uploader("Upload historical stock data (CSV/XLSX)", type=["csv", "xlsx"])
 
@@ -35,7 +34,7 @@ if uploaded_file is not None:
     st.subheader("📋 Data Preview")
     st.write(df.tail())
 
-    df_recent = df[['Close']].copy().tail(2000)
+    df_recent = df[['Close']].copy().tail(180)
     df_recent['day_sin']   = np.sin(2 * np.pi * df_recent.index.dayofweek / 7)
     df_recent['day_cos']   = np.cos(2 * np.pi * df_recent.index.dayofweek / 7)
     df_recent['month_sin'] = np.sin(2 * np.pi * df_recent.index.month / 12)
@@ -62,55 +61,59 @@ if uploaded_file is not None:
     ])
     model.compile(optimizer='adam', loss='mse')
     with st.spinner("⏳ Training LSTM..."):
-        model.fit(X, y, epochs=30, batch_size=32, verbose=1, callbacks=[EarlyStopping(patience=5, restore_best_weights=True)])
+        model.fit(X, y, epochs=50, batch_size=16, verbose=0, callbacks=[EarlyStopping(patience=5, restore_best_weights=True)])
     st.success("✅ Model trained!")
 
+    # US holidays (DD-MM-YYYY)
     us_holidays = pd.to_datetime([
         "02-01-2023", "16-01-2023", "20-02-2023", "07-04-2023", "29-05-2023", "19-06-2023", "04-07-2023", "04-09-2023", "23-11-2023", "25-12-2023",
         "01-01-2024", "15-01-2024", "19-02-2024", "29-03-2024", "27-05-2024", "19-06-2024", "04-07-2024", "02-09-2024", "28-11-2024", "25-12-2024",
         "01-01-2025", "20-01-2025", "17-02-2025", "18-04-2025", "26-05-2025", "19-06-2025", "04-07-2025", "01-09-2025", "27-11-2025", "25-12-2025"
     ], format='%d-%m-%Y')
 
-    historical_dates = pd.to_datetime(df.index.unique())
     def next_valid_trading_days(start, count):
         dates = []
         current = pd.Timestamp(start)
-        limit = pd.Timestamp.max - pd.Timedelta(days=10)
-
         while len(dates) < count:
             current += pd.Timedelta(days=1)
-            if current > limit:
-                break  # safety stop to prevent infinite loop
             if current.weekday() < 5 and current not in us_holidays:
                 dates.append(current)
         return dates
 
-    def forecast_next_7(model, scaled_data, scaler, base_df):
+    def forecast_adjusted(model, scaled_data, scaler, base_df, alpha=0.7):
         seq = scaled_data[-seq_len:].reshape(1, seq_len, -1)
         preds = []
-        future_dates = next_valid_trading_days(base_df.index[-1], 7)
+        f_dates = next_valid_trading_days(base_df.index[-1], 7)
+        rolling_std = base_df['Close'].diff().rolling(window=14).std().iloc[-1] or 2.0
+        recent_avg = base_df['Close'].tail(7).mean()
+        last_actual = base_df['Close'][-1]
 
-        for f_date in future_dates:
+        for d in f_dates:
             pred_scaled = model.predict(seq, verbose=0)
             seasonal = [
-                np.sin(2 * np.pi * f_date.weekday() / 7),
-                np.cos(2 * np.pi * f_date.weekday() / 7),
-                np.sin(2 * np.pi * f_date.month / 12),
-                np.cos(2 * np.pi * f_date.month / 12)
+                np.sin(2 * np.pi * d.weekday() / 7),
+                np.cos(2 * np.pi * d.weekday() / 7),
+                np.sin(2 * np.pi * d.month / 12),
+                np.cos(2 * np.pi * d.month / 12)
             ]
             last_feats = seq[0, -1, 1:]
-            full_scaled_row = np.concatenate([pred_scaled[0], last_feats])
-            actual_pred = scaler.inverse_transform(full_scaled_row.reshape(1, -1))[0][0]
-            preds.append(round(actual_pred, 2))
+            full_row = np.concatenate([pred_scaled[0], last_feats])
+            pred = scaler.inverse_transform(full_row.reshape(1, -1))[0][0]
 
-            new_row = np.concatenate([pred_scaled[0], seasonal])
+            # 🔧 Apply trend anchoring and volatility guardrail
+            anchored = alpha * pred + (1 - alpha) * recent_avg
+            capped = np.clip(anchored, last_actual - 3 * rolling_std, last_actual + 3 * rolling_std)
+            preds.append(round(capped, 2))
+            last_actual = capped
+
+            new_row = np.concatenate([scaler.transform([[capped] + seasonal])[0]])
             seq = np.append(seq[0][1:], [new_row], axis=0).reshape(1, seq_len, -1)
 
-        return preds, future_dates
+        return preds, f_dates
 
-    predictions, forecast_dates = forecast_next_7(model, scaled_data, scaler, df_recent)
+    predictions, forecast_dates = forecast_adjusted(model, scaled_data, scaler, df_recent)
 
-    st.subheader("📊 Predicted Closing Prices (Next Valid Trading Days)")
+    st.subheader("📊 Calibrated Forecast (Next 7 Trading Days)")
     for d, p in zip(forecast_dates, predictions):
         st.write(f"{d.strftime('%A, %d %b %Y')} → ${p}")
 
@@ -119,7 +122,7 @@ if uploaded_file is not None:
     fig.patch.set_facecolor('#121212')
     ax.set_facecolor('#121212')
     ax.plot(forecast_dates, predictions, marker='o', linestyle='--', color='orange', label='Forecast')
-    ax.set_title("7-Day Stock Price Forecast (Holiday-Aware)", color='white')
+    ax.set_title("7-Day Stock Forecast (Anchored & Guarded)", color='white')
     ax.set_xlabel("Date", color='white')
     ax.set_ylabel("Price ($)", color='white')
     ax.tick_params(axis='x', rotation=45, colors='white')
